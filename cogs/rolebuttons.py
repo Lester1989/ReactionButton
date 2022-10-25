@@ -8,10 +8,10 @@ NEWLINE = '\n'
 class RoleButtons(interactions.Extension):
     def __init__(self, client: interactions.Client):
         self.client: interactions.Client = client
-        self.db: PickleDB = pickle_load('role_buttons')
+        self.db: PickleDB = pickle_load('role_buttons',True)
     
     def list_roles(self)->list[tuple[str,str]]:
-        return [(key,self.db.get(key)) for key in self.db.getall()]
+        return [(key,self.db.get(key)) for key in self.db.getall() if key != 'TEXT']
 
     @interactions.extension_command(
         name="rollen_button_erstellen",
@@ -42,6 +42,23 @@ Button für Rolle hinzugefügt! Es sind jetzt {len(roles)} Rollen über Buttons 
             ,ephemeral=True)
 
     @interactions.extension_command(
+        name="rollen_text_anpassen",
+        description="Ändert den Text, oberhalb der Rollenbuttons",
+        scope=config.guilds,
+        options = [
+            interactions.Option(
+                name="text",
+                description="Beschreibung oberhalb der Buttons",
+                type=interactions.OptionType.STRING,
+                required=True,
+            ),
+        ],
+    )
+    async def _rollen_text_anpassen(self,ctx:interactions.CommandContext,text:str):
+        self.db.set('TEXT',text)
+        await ctx.send(**self.rollen_nachricht_bauen(),ephemeral=True)
+
+    @interactions.extension_command(
         name="rollen_button_entfernen",
         description="Entfernt eine Rolle mit Button",
         scope=config.guilds,
@@ -62,7 +79,7 @@ Button für Rolle hinzugefügt! Es sind jetzt {len(roles)} Rollen über Buttons 
     )
     async def _rollen_button_entfernen(self,ctx:interactions.CommandContext,button_text:str=None,role:interactions.Role=None):
         roles = self.list_roles()
-        deleting_role = [role_id for role_id,role_text in roles if role_id==f'{role.id}' or role_text==button_text ]
+        deleting_role = [role_id for role_id,role_text in roles if (role_id==f'{role.id}' and role) or role_text==button_text ]
         if not deleting_role:
             await ctx.send(f'Rolle konnte nicht gefunden werden. Folgende Rollen sind registriert: {NEWLINE.join(f"<@&{role_id}> <- {role_text}" for role_id,role_text in roles)}')
             return
@@ -75,7 +92,8 @@ Button und Rolle entfernt! Es sind jetzt {len(roles)} Rollen über Buttons verf�
 
     def rollen_nachricht_bauen(self):
         roles = self.list_roles()
-        text = '''
+        
+        text = self.db.get('TEXT') or '''
 Benutze einen der Buttons, um dir eine Rolle geben zu lassen!
 '''
         actionrows = interactions.spread_to_rows(
@@ -87,14 +105,22 @@ Benutze einen der Buttons, um dir eine Rolle geben zu lassen!
                 )
                 for role_id,role_text in roles
             ],
-            interactions.Button(
-                style=interactions.ButtonStyle.DANGER,
-                label='Aktualisieren',
-                custom_id=f'aktualisieren'
-            )
+            # interactions.Button(
+            #     style=interactions.ButtonStyle.DANGER,
+            #     label='Aktualisieren',
+            #     custom_id=f'aktualisieren'
+            # )
 
         )
         return {'content':text,'components':actionrows}
+
+    @interactions.extension_command(
+        name="rollen_buttons",
+        description="Erstellt die Nachricht mit den Buttons",
+        scope=config.guilds,
+    )
+    async def post_role_buttons(self,ctx:interactions.CommandContext):
+        await ctx.send(**self.rollen_nachricht_bauen())
 
     @extension_component("aktualisieren")
     async def aktualisieren(self,ctx:interactions.ComponentContext):
@@ -105,9 +131,14 @@ Benutze einen der Buttons, um dir eine Rolle geben zu lassen!
         role_id = ctx.custom_id.split('_')[-1]
         role_text = [text for id,text in self.list_roles() if id==role_id]
         if role_text:
-            await ctx.send(f'Rolle vergeben <@&{role_id}> ',ephemeral=True)
+            if int(role_id) in ctx.author.roles:
+                await ctx.author.remove_role(int(role_id),ctx.guild_id,reason='button Bot')
+                await ctx.send(f'Rolle entfernt <@&{role_id}> ',ephemeral=True)
+            else:
+                await ctx.author.add_role(int(role_id),ctx.guild_id,reason='button Bot')
+                await ctx.send(f'Rolle vergeben <@&{role_id}> ',ephemeral=True)
         else:
             await ctx.send(f'Für den Button {role_text} ist **keine** Rolle mehr hinterlegt. Aktualisiere die Buttonnachricht')
     
 def setup(client):
-  RoleButtons(client)
+    RoleButtons(client)
